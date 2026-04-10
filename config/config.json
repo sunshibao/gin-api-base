@@ -1,0 +1,24 @@
+{
+  "runmode": "debug",
+  "addr": ":8080",
+
+  "jwt": {
+    "secret": "your-secret-key-change-in-production",
+    "expire_hours": 24
+  },
+
+  "redis": {
+    "host": "127.0.0.1",
+    "port": "6379",
+    "password": "",
+    "db": 0
+  },
+
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": "3306",
+    "user": "root",
+    "password": "",
+    "database": "gin_api"
+  }
+}
