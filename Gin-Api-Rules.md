@@ -11,17 +11,22 @@ trigger: always_on
 
 ```
 .
-├── config/          # 配置管理（Viper + JSON）
-├── handler/         # 处理器层：接收请求、参数校验、调用 service、返回响应
-├── service/         # 业务逻辑层：核心业务、数据组装、请求/响应结构体定义
-├── model/           # 数据模型层：GORM 模型定义 + 数据库 CRUD 操作
-├── middleware/       # 中间件：CORS、JWT 认证、请求日志
-├── pkg/             # 公共工具包
-│   ├── resp/        #   统一 JSON 响应
-│   └── jwtutil/     #   JWT Token 工具
-├── router/          # 路由注册（统一入口）
-├── server/          # 基础设施：MySQL、Redis 连接管理
-└── main.go          # 入口：配置 → 数据库 → 建表 → 路由 → 启动
+├── config/              # 配置管理（Viper + JSON）
+├── handler/             # 处理器层：接收请求、参数校验、调用 service、返回响应
+├── service/             # 业务逻辑层：核心业务、数据组装、请求/响应结构体定义
+├── model/               # 数据访问层：纯 CRUD 操作函数（不含模型定义）
+├── middleware/           # 中间件：CORS、JWT 认证、请求日志
+├── pkg/                 # 公共工具包
+│   ├── resp/            #   统一 JSON 响应
+│   └── jwtutil/         #   JWT Token 工具
+├── router/              # 路由注册（统一入口）
+├── server/              # 基础设施
+│   ├── mysql/           #   MySQL 连接 + 模型定义 + 自动建表（package mysqlServer）
+│   │   ├── mysql.go     #     连接初始化、连接池、RegisterModel、AutoMigrate、GetDB()
+│   │   └── model.go     #     所有 GORM 模型定义 + init() 注册
+│   └── redis/           #   Redis 连接管理（package redisServer）
+│       └── redis.go     #     连接初始化、GetRedis()
+└── main.go              # 入口：配置 → 数据库(含建表) → 路由 → 启动
 ```
 
 ## 核心开发规范
@@ -29,30 +34,30 @@ trigger: always_on
 ### 1. 分层调用规则（严格遵守）
 
 ```
-Handler → Service → Model → server.GetDB()
+Handler → Service → Model → mysqlServer.GetDB()
 ```
 
 - **Handler 层** (`handler/`)：只做参数绑定、调用 service、返回响应。禁止直接操作数据库。
-- **Service 层** (`service/`)：编写业务逻辑，定义请求/响应结构体（XxxReq / XxxResp），调用 model 层。
-- **Model 层** (`model/`)：定义 GORM 模型（struct + TableName），编写数据库 CRUD 函数。
-- **Server 层** (`server/`)：只负责数据库连接初始化和获取，不含业务逻辑。
+- **Service 层** (`service/`)：编写业务逻辑，定义请求/响应结构体（XxxReq / XxxResp），调用 model 层。构造模型对象时使用 `mysqlServer.Xxx`。
+- **Model 层** (`model/`)：纯数据访问层，只编写 CRUD 函数。**不包含模型定义**，模型类型通过 `mysqlServer.Xxx` 引用。
+- **Server 层** (`server/mysql/`、`server/redis/`)：负责数据库连接、模型定义、自动建表，不含业务逻辑。
 
 ### 2. 新增业务模块步骤
 
-当新增一个业务模块（如 "文章管理"），按以下顺序创建文件：
+当新增一个业务模块（如 "文章管理"），按以下顺序操作：
 
-1. `model/article.go` — 定义 Article 结构体 + TableName() + CRUD 函数
-2. `service/article.go` — 定义请求/响应结构体 + 业务逻辑函数
-3. `handler/article.go` — 编写 HTTP 处理函数
-4. `router/router.go` — 注册新路由
-5. `model/` 中的 `AutoMigrate()` — 添加新表迁移
+1. `server/mysql/model.go` — 定义 Article 结构体 + TableName()，在 `init()` 中追加 `&Article{}` 注册
+2. `model/article.go` — 编写 CRUD 函数（使用 `mysqlServer.Article` 类型）
+3. `service/article.go` — 定义请求/响应结构体 + 业务逻辑函数
+4. `handler/article.go` — 编写 HTTP 处理函数
+5. `router/router.go` — 注册新路由
 
 ### 3. 命名约定
 
 | 类别 | 规则 | 示例 |
 |------|------|------|
 | 文件名 | 小写单数 | `user.go`, `article.go` |
-| 包名 | 小写单词 | `handler`, `service`, `model` |
+| 包名 | 小写单词或驼峰 | `handler`, `service`, `model`, `mysqlServer`, `redisServer` |
 | Handler 函数 | 动词 + 名词 | `GetUser`, `CreateArticle`, `ListUsers` |
 | Service 函数 | 同 Handler | `Register`, `Login`, `GetUser` |
 | Model 函数 | 动词 + 模型名 | `CreateUser`, `GetUserByID`, `ListUsers` |
@@ -97,26 +102,58 @@ resp.Fail(c, 1001, "用户名已存在")           // 业务错误（HTTP 200）
 - 中间件文件放在 `middleware/` 目录，每个中间件一个文件
 - 中间件函数签名：`func XxxMiddleware() gin.HandlerFunc`
 
-### 7. Model 层规范
+### 7. 模型定义规范（`server/mysql/model.go`）
+
+所有 GORM 模型统一定义在 `server/mysql/model.go` 中，通过 `init()` 自动注册，启动时自动建表：
 
 ```go
+package mysqlServer
+
 // 模型定义
-type User struct {
+type Article struct {
     gorm.Model
-    Username string `gorm:"column:username;type:varchar(64);uniqueIndex;not null" json:"username"`
-    Password string `gorm:"column:password;type:varchar(255);not null"            json:"-"`
+    Title   string `gorm:"column:title;type:varchar(200);not null" json:"title"`
+    Content string `gorm:"column:content;type:text"                json:"content"`
 }
 
-func (User) TableName() string { return "user" }
+func (Article) TableName() string { return "article" }
+
+// 在 init() 中追加注册
+func init() {
+    RegisterModel(
+        &User{},
+        &Article{}, // 新增
+    )
+}
 ```
 
 - 使用 `gorm.Model` 内嵌（自带 ID/CreatedAt/UpdatedAt/DeletedAt）
 - 必须显式定义 `TableName()` 方法
 - 必须写完整的 gorm tag（column、type、约束）
 - 密码等敏感字段用 `json:"-"` 隐藏
-- 新增模型后在 `AutoMigrate()` 中添加迁移
+- 新增模型在 `init()` 中追加 `RegisterModel()`，无需改其他文件
 
-### 8. Handler 层标准模板
+### 8. Model 数据访问层规范（`model/`）
+
+`model/` 只包含纯 CRUD 函数，不含模型定义。通过 `mysqlServer.Xxx` 引用模型类型：
+
+```go
+package model
+
+import mysqlServer "gin-api/server/mysql"
+
+func CreateArticle(article *mysqlServer.Article) error {
+    return mysqlServer.GetDB().Create(article).Error
+}
+
+func GetArticleByID(id uint) (*mysqlServer.Article, error) {
+    var article mysqlServer.Article
+    err := mysqlServer.GetDB().First(&article, id).Error
+    return &article, err
+}
+```
+
+### 9. Handler 层标准模板
 
 ```go
 // XxxHandler 功能说明
@@ -141,12 +178,23 @@ func XxxHandler(c *gin.Context) {
 }
 ```
 
-### 9. 错误处理规范
+### 10. 错误处理规范
 
-- Handler 层：参数错误用 `resp.ErrBadRequest`，业务错误用 `resp.Fail`
+- Handler 层：参数错误用 `resp.Fail(c, 400, ...)`，业务错误用 `resp.Fail(c, 1xxx, ...)`
 - Service 层：返回 `error`，使用 `errors.New()` 或 `fmt.Errorf("xxx: %w", err)`
 - Model 层：直接返回 GORM 的 error
 - 检查记录不存在：`errors.Is(err, gorm.ErrRecordNotFound)`
+
+### 11. 包引用规范
+
+由于 `server/mysql` 目录的包名为 `mysqlServer`，`server/redis` 目录的包名为 `redisServer`，import 时需使用别名：
+
+```go
+import (
+    mysqlServer "gin-api/server/mysql"
+    redisServer "gin-api/server/redis"
+)
+```
 
 ## 技术栈
 
