@@ -1,4 +1,4 @@
-package server
+package mysqlServer
 
 import (
 	"fmt"
@@ -13,7 +13,15 @@ import (
 
 var db *gorm.DB
 
-// InitMySQL 初始化 MySQL 连接
+// models 统一注册需要自动建表的模型，新增模型在此追加
+var models = []interface{}{}
+
+// RegisterModel 注册需要自动迁移的模型
+func RegisterModel(m ...interface{}) {
+	models = append(models, m...)
+}
+
+// InitMySQL 初始化 MySQL 连接并自动建表
 func InitMySQL() {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
 		viper.GetString("mysql.user"),
@@ -43,6 +51,14 @@ func InitMySQL() {
 	sqlDB.SetMaxOpenConns(100)
 
 	log.Println("MySQL 连接成功")
+
+	// 自动建表
+	if len(models) > 0 {
+		if err := db.AutoMigrate(models...); err != nil {
+			log.Fatalf("数据库迁移失败: %v", err)
+		}
+		log.Println("数据库迁移完成")
+	}
 }
 
 // GetDB 获取数据库实例

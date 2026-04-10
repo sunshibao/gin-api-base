@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"gin-api/config"
-	"gin-api/model"
 	"gin-api/router"
-	"gin-api/server"
+	mysqlServer "gin-api/server/mysql"
+	redisServer "gin-api/server/redis"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
@@ -22,20 +22,15 @@ func main() {
 	// 2. 设置运行模式
 	gin.SetMode(viper.GetString("runmode"))
 
-	// 3. 初始化数据库
-	server.InitMySQL()
-	server.InitRedis()
+	// 3. 初始化数据库（含自动建表）
+	mysqlServer.InitMySQL()
+	redisServer.InitRedis()
 
-	// 4. 自动建表
-	if err := model.AutoMigrate(); err != nil {
-		log.Fatalf("数据库迁移失败: %v", err)
-	}
-
-	// 5. 创建路由
+	// 4. 创建路由
 	g := gin.New()
 	router.Setup(g)
 
-	// 6. 启动服务
+	// 5. 启动服务
 	addr := viper.GetString("addr")
 	srv := &http.Server{
 		Addr:           addr,

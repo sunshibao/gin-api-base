@@ -7,6 +7,7 @@ import (
 
 	"gin-api/model"
 	"gin-api/pkg/jwtutil"
+	mysqlServer "gin-api/server/mysql"
 
 	"gorm.io/gorm"
 )
@@ -57,7 +58,7 @@ func Register(req *RegisterReq) error {
 		return fmt.Errorf("查询用户失败: %w", err)
 	}
 
-	user := &model.User{
+	user := &mysqlServer.User{
 		Username: req.Username,
 		Password: hashPassword(req.Password),
 		Nickname: req.Nickname,
@@ -152,7 +153,7 @@ func hashPassword(password string) string {
 	return fmt.Sprintf("%x", h)
 }
 
-func toUserInfo(u *model.User) *UserInfo {
+func toUserInfo(u *mysqlServer.User) *UserInfo {
 	return &UserInfo{
 		ID:       u.ID,
 		Username: u.Username,
